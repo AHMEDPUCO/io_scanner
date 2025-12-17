@@ -294,22 +294,77 @@
 
     // Simulación de progreso UI
     const formScan = document.getElementById('form-scan');
-    if (formScan) {
-      formScan.addEventListener('submit', () => {
-        const status = document.getElementById('ui-status');
-        const prog = document.getElementById('ui-progress');
-        if (status && prog) {
-          status.textContent = 'Escaneando…';
-          prog.style.display = 'block';
-          prog.removeAttribute('aria-hidden');
-          let x = 0;
-          const t = setInterval(() => {
-            x = Math.min(100, x + 7);
-            prog.value = x;
-            if (x >= 100) { clearInterval(t); }
-          }, 300);
-        }
-      });
+
+  function setUI(statusText, percent, showBar=true) {
+    const status = document.getElementById('ui-status');
+    const prog = document.getElementById('ui-progress');
+    if (status) status.textContent = statusText;
+    if (prog) {
+      prog.style.display = showBar ? 'block' : 'none';
+      if (showBar) prog.removeAttribute('aria-hidden');
+      prog.value = percent;
     }
-  </script>
+  }
+
+  async function startScan(form) {
+    const fd = new FormData(form);
+    const res = await fetch('/api/scan/start', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'Error iniciando escaneo');
+    return data.job_id;
+  }
+
+  async function pollProgress(jobId) {
+    const res = await fetch(`/api/scan/progress/${jobId}`);
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'Error consultando progreso');
+    return data;
+  }
+
+  if (formScan) {
+    formScan.addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      // UI initial
+      setUI('Iniciando…', 0, true);
+
+      // Deshabilitar botón submit para evitar doble envío
+      const submitBtn = formScan.querySelector('button[type="submit"]');
+      if (submitBtn) submitBtn.disabled = true;
+
+      try {
+        const jobId = await startScan(formScan);
+
+        const t = setInterval(async () => {
+          try {
+            const p = await pollProgress(jobId);
+
+            if (p.status === 'running') {
+              const done = p.done ?? 0;
+              const total = p.total ?? 0;
+              setUI(`Escaneando… ${done}/${total}`, p.progress ?? 0, true);
+            } else if (p.status === 'done') {
+              clearInterval(t);
+              setUI('Completado ✅', 100, true);
+              window.location.href = `/scan/results/${jobId}`;
+            } else if (p.status === 'error') {
+              clearInterval(t);
+              setUI(`Error: ${p.error || 'desconocido'}`, 0, false);
+              if (submitBtn) submitBtn.disabled = false;
+            }
+          } catch (err) {
+            clearInterval(t);
+            setUI(`Error: ${err.message}`, 0, false);
+            if (submitBtn) submitBtn.disabled = false;
+          }
+        }, 500);
+
+      } catch (err) {
+        setUI(`Error: ${err.message}`, 0, false);
+        if (submitBtn) submitBtn.disabled = false;
+      }
+    });
+  }
+</script>
+  
 {% endblock %}
