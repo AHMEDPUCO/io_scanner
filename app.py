@@ -7,6 +7,10 @@ from werkzeug.utils import secure_filename
 import math
 from io import BytesIO
 import ipaddress  # <-- ¡Nuevo!
+import uuid
+import threading
+from flask import jsonify
+
 
 from vlan_classifier import (
     crear_base_datos,
@@ -30,6 +34,9 @@ from web_scanner import (
 # --- App Setup ---
 PAGE_SIZE_DEFAULT = 100
 MAX_IPS_ALLOWED = 256  # Límite razonable para evitar sobrecarga
+JOBS = {}
+JOBS_LOCK = threading.Lock()
+
 
 app = Flask(__name__)
 app.secret_key = 'tu_clave_secreta_aqui'  # Necesario para flash messages
@@ -287,12 +294,14 @@ def index():
             ips=ips,
             specific_port=specific_port,
             run_nmap_scan=run_nmap,
-            full_nmap_scan=full_nmap
+            full_nmap_scan=full_nmap,
+
         )
 
         for entry in results:
             for p in entry['ports']:
-                save_to_db(entry['ip'], entry.get('hostname', ''), p['port'], p['state'], p['service'])
+                scan_date = entry.get('scan_date')
+                save_to_db(entry['ip'], entry.get('hostname', ''), p['port'], p['state'], p['service'], scan_date=scan_date)
         export_to_txt(results, 'resultados.txt')
         export_to_csv(results, 'resultados.csv')
         generate_pdf(results, 'resultados.pdf')
@@ -369,7 +378,8 @@ def escanear_vlan():
 
     for entry in results:
         for p in entry['ports']:
-            save_to_db(entry['ip'], entry.get('hostname', ''), p['port'], p['state'], p['service'])
+            scan_date = entry.get('scan_date')
+            save_to_db(entry['ip'], entry.get('hostname', ''), p['port'], p['state'], p['service'], scan_date=scan_date)
     export_to_txt(results, 'resultados.txt')
     export_to_csv(results, 'resultados.csv')
     generate_pdf(results, 'resultados.pdf')
@@ -638,6 +648,112 @@ def download_ip(ip, filetype):
     except Exception as e:
         return f'Error: {e}', 500
 
+@app.route('/api/scan/start', methods=['POST'])
+def api_scan_start():
+    # 1) leer ips exactamente como ya haces en index() POST
+    data = ''
+    if 'file' in request.files and request.files['file'].filename:
+        f = request.files['file']
+        if not f.filename.endswith('.txt'):
+            return jsonify({"ok": False, "error": "Solo archivos .txt permitidos"}), 400
+        data = f.read().decode('utf-8')
+    else:
+        data = request.form.get('ips', '')
+
+    raw_ips = [ip.strip() for ip in data.replace(',', '\n').split('\n') if ip.strip()]
+    if not raw_ips:
+        return jsonify({"ok": False, "error": "Ingrese al menos una IP o rango CIDR"}), 400
+
+    try:
+        ips = expand_and_validate_ips(raw_ips)
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+    try:
+        specific_port = int(request.form.get('port', 10050))
+    except ValueError:
+        specific_port = 10050
+
+    run_nmap = 'run_nmap_scan' in request.form
+    full_nmap = 'full_nmap_scan' in request.form
+
+    job_id = uuid.uuid4().hex
+
+    with JOBS_LOCK:
+        JOBS[job_id] = {
+            "status": "running",
+            "done": 0,
+            "total": len(ips),
+            "progress": 0,
+            "error": None,
+            "results": None
+        }
+
+    def worker():
+        def progress_cb(done, total, ip):
+            pct = int((done / max(1, total)) * 100)
+            with JOBS_LOCK:
+                if job_id in JOBS:
+                    JOBS[job_id]["done"] = done
+                    JOBS[job_id]["total"] = total
+                    JOBS[job_id]["progress"] = min(99, pct)  # 99 hasta terminar
+
+        try:
+            results = scan_ips(
+                ips=ips,
+                specific_port=specific_port,
+                run_nmap_scan=run_nmap,
+                full_nmap_scan=full_nmap,
+                progress_callback=progress_cb
+            )
+
+            for entry in results:
+                for p in entry['ports']:
+                    scan_date = entry.get('scan_date')
+                    save_to_db(entry['ip'], entry.get('hostname', ''), p['port'], p['state'], p['service'], scan_date=scan_date)
+
+            export_to_txt(results, 'resultados.txt')
+            export_to_csv(results, 'resultados.csv')
+            generate_pdf(results, 'resultados.pdf')
+
+            with JOBS_LOCK:
+                JOBS[job_id]["results"] = results
+                JOBS[job_id]["status"] = "done"
+                JOBS[job_id]["progress"] = 100
+
+        except Exception as e:
+            with JOBS_LOCK:
+                JOBS[job_id]["status"] = "error"
+                JOBS[job_id]["error"] = str(e)
+
+    threading.Thread(target=worker, daemon=True).start()
+
+    return jsonify({"ok": True, "job_id": job_id})
+
+
+@app.route('/api/scan/progress/<job_id>')
+def api_scan_progress(job_id):
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if not job:
+            return jsonify({"ok": False, "error": "Job no encontrado"}), 404
+        return jsonify({"ok": True, **job})
+
+
+@app.route('/scan/results/<job_id>')
+def scan_results(job_id):
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if not job:
+            return render_template('results.html', error="Job no encontrado")
+        if job["status"] == "error":
+            return render_template('results.html', error=job["error"])
+        if job["status"] != "done":
+            return render_template('results.html', error="Aún no termina el escaneo")
+
+        results = job["results"]
+
+    return render_template('results.html', results=results)
 
 @app.route('/history')
 def history():
