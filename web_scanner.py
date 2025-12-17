@@ -273,7 +273,7 @@ class NmapConfig:
 
 # ========== NÚCLEO DEL ESCANEO MULTIHILO OPTIMIZADO ==========
 def scan_ips(ips, specific_port=10050, run_nmap_scan=False, 
-             full_nmap_scan=False, max_threads=100, batch_size=100):
+             full_nmap_scan=False, max_threads=100, batch_size=100, progress_callback=None):
     """
     Escaneo multihilo optimizado con NMAP configurado correctamente
     """
@@ -299,7 +299,9 @@ def scan_ips(ips, specific_port=10050, run_nmap_scan=False,
         """Procesa una IP individual"""
         nonlocal db_batch, stats
         
-        entry = {'ip': ip, 'hostname': '', 'ports': []}
+        scan_ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        entry = {'ip': ip, 'hostname': '', 'ports': [], 'scan_date': scan_ts}
+
         
         try:
             # 1. Resolución DNS
@@ -320,8 +322,8 @@ def scan_ips(ips, specific_port=10050, run_nmap_scan=False,
                     db_batch.append((
                         ip, hostname, specific_port, 
                         state, 'zabbix-agent', 
-                        datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    ))
+                        scan_ts)
+                    )
             
             # 3. Escaneo Nmap (si está habilitado)
             if run_nmap_scan or full_nmap_scan:
@@ -375,7 +377,7 @@ def scan_ips(ips, specific_port=10050, run_nmap_scan=False,
                                     db_batch.append((
                                         ip, hostname, port_info['port'],
                                         port_info['state'], port_info['service'],
-                                        datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                                        scan_ts
                                     ))
                         
                     except nmap.PortScannerError as e:
@@ -395,6 +397,13 @@ def scan_ips(ips, specific_port=10050, run_nmap_scan=False,
             
             with stats_lock:
                 stats['total'] += 1
+                done = stats['total']
+            if progress_callback:
+                try:
+                    progress_callback(done, total_ips, ip)
+                except Exception as e:
+                    logger.warning(f"Error en callback de progreso: {e}")
+
             
             return entry
             
@@ -531,7 +540,9 @@ def scan_ips_staged(ips, specific_port=10050, run_nmap_scan=False,
     
     def stage1_worker(ip):
         """Trabajador para etapa 1"""
-        entry = {'ip': ip, 'hostname': nslookup(ip), 'ports': []}
+        scan_ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        entry = {'ip': ip, 'hostname': '', 'ports': [], 'scan_date': scan_ts}
+
         
         if specific_port is not None:
             state = check_single_port(ip, specific_port, timeout=0.3)
