@@ -120,72 +120,107 @@
 
 {% block scripts %}
 <script>
-  // Expandir/colapsar tarjetas
-  document.addEventListener('DOMContentLoaded', () => {
-    document.querySelectorAll('.toggle-card').forEach(btn => {
-      btn.addEventListener('click', () => toggleCard(btn));
-      btn.addEventListener('keypress', (e) => { if(e.key === 'Enter' || e.key === ' ') toggleCard(btn); });
+document.addEventListener('DOMContentLoaded', () => {
+  // Toggle individual de tarjetas
+  document.querySelectorAll('.toggle-card').forEach(btn => {
+    btn.addEventListener('click', () => toggleCard(btn));
+    btn.addEventListener('keypress', e => {
+      if (e.key === 'Enter' || e.key === ' ') toggleCard(btn);
     });
-
-    // Botones globales
-    const expandAll = document.getElementById('btnExpandAll');
-    const collapseAll = document.getElementById('btnCollapseAll');
-    if(expandAll){ expandAll.addEventListener('click', ()=> setAllCards(true)); }
-    if(collapseAll){ collapseAll.addEventListener('click', ()=> setAllCards(false)); }
-
-    // Resumen por IP (cliente)
-    document.querySelectorAll('.ip-card').forEach(card=>{
-      const summary = card.querySelector('[data-summary]');
-      if(!summary) return;
-      const rows = card.querySelectorAll('tbody tr');
-      let abiertos=0, cerrados=0, otros=0;
-      rows.forEach(r=>{
-        const estado = (r.cells[1]?.innerText || '').toLowerCase();
-        if(estado.includes('abierto')) abiertos++;
-        else if(estado.includes('cerrado')) cerrados++;
-        else otros++;
-      });
-      summary.textContent = `Puertos: abiertos ${abiertos}, cerrados ${cerrados}${otros?`, otros ${otros}`:''}`;
-    });
-
-    // Filtro global por IP/hostname
-    const ipSearch = document.getElementById('ipSearch');
-    const clearFilter = document.getElementById('clearFilter');
-    if(ipSearch){ ipSearch.addEventListener('input', ()=>{
-      const q = ipSearch.value.trim().toLowerCase();
-      document.querySelectorAll('.ip-card').forEach(card=>{
-        const ip = card.getAttribute('data-ip') || '';
-        const host = card.getAttribute('data-host') || '';
-        card.style.display = (ip.includes(q) || host.includes(q)) ? '' : 'none';
-      });
-    }); }
-    if(clearFilter){ clearFilter.addEventListener('click', ()=>{
-      ipSearch.value=''; ipSearch.dispatchEvent(new Event('input'));
-    }); }
   });
 
-  function toggleCard(btn){
-    const card = btn.closest('.card');
-    const content = card.querySelector('.card-content');
-    const icon = btn.querySelector('i');
-    const isHidden = content.style.display === 'none';
-    content.style.display = isHidden ? 'block' : 'none';
-    icon.classList.toggle('fa-angle-up', isHidden);
-    icon.classList.toggle('fa-angle-down', !isHidden);
+  // Botones de expandir y colapsar todo
+  const expandAll = document.getElementById('btnExpandAll');
+  const collapseAll = document.getElementById('btnCollapseAll');
+
+  if (expandAll) {
+    expandAll.addEventListener('click', () => setAllCards(true));
+  }
+  if (collapseAll) {
+    collapseAll.addEventListener('click', () => setAllCards(false));
   }
 
-  function setAllCards(expand){
-    document.querySelectorAll('.ip-card').forEach(card=>{
-      const content = card.querySelector('.card-content');
-      const icon = card.querySelector('.toggle-card i');
-      if(expand){
-        content.style.display='block';
-        icon.classList.add('fa-angle-up'); icon.classList.remove('fa-angle-down');
-      }else{
-        content.style.display='none';
-        icon.classList.remove('fa-angle-up'); icon.classList.add('fa-angle-down');
-      }
+  // Resumen por IP
+  document.querySelectorAll('.ip-card').forEach(card => {
+    const summary = card.querySelector('[data-summary]');
+    if (!summary) return;
+
+    const rows = card.querySelectorAll('tbody tr');
+    let abiertos = 0, cerrados = 0, otros = 0;
+
+    rows.forEach(r => {
+      const estado = (r.cells[1]?.innerText || '').toLowerCase();
+      if (estado.includes('abierto')) abiertos++;
+      else if (estado.includes('cerrado')) cerrados++;
+      else otros++;
+    });
+
+    summary.textContent =
+      `Puertos: abiertos ${abiertos}, cerrados ${cerrados}` +
+      (otros ? `, otros ${otros}` : '');
+  });
+
+  // Filtro global por IP / hostname
+  const ipSearch = document.getElementById('ipSearch');
+  const clearFilter = document.getElementById('clearFilter');
+
+  if (ipSearch) {
+    ipSearch.addEventListener('input', () => {
+      const q = ipSearch.value.trim().toLowerCase();
+      document.querySelectorAll('.ip-card').forEach(card => {
+        const ip = card.dataset.ip || '';
+        const host = card.dataset.host || '';
+        card.style.display = (ip.includes(q) || host.includes(q)) ? '' : 'none';
+      });
     });
   }
+
+  if (clearFilter) {
+    clearFilter.addEventListener('click', () => {
+      ipSearch.value = '';
+      ipSearch.dispatchEvent(new Event('input'));
+    });
+  }
+});
+
+// =========================
+// Helpers
+// =========================
+
+// Función para colapsar o expandir tarjetas individuales
+function toggleCard(btn) {
+  const card = btn.closest('.ip-card');
+  const icon = btn.querySelector('i');
+
+  card.classList.toggle('is-collapsed');
+  const isCollapsed = card.classList.contains('is-collapsed');
+
+  icon.classList.toggle('fa-angle-up', !isCollapsed);
+  icon.classList.toggle('fa-angle-down', isCollapsed);
+}
+
+// Función para expandir o colapsar todas las tarjetas
+function setAllCards(expand) {
+  const cards = document.querySelectorAll('.ip-card');
+  const action = expand ? 'remove' : 'add';
+
+  // Aplicamos o eliminamos la clase "is-collapsed" a todas las tarjetas
+  cards.forEach(card => {
+    card.classList[action]('is-collapsed');
+  });
+
+  // Actualizamos los íconos de expandir/colapsar
+  const icons = document.querySelectorAll('.toggle-card i');
+  icons.forEach(icon => {
+    if (expand) {
+      icon.classList.add('fa-angle-up');
+      icon.classList.remove('fa-angle-down');
+    } else {
+      icon.classList.remove('fa-angle-up');
+      icon.classList.add('fa-angle-down');
+    }
+  });
+}
 </script>
 {% endblock %}
+  
